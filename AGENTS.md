@@ -90,3 +90,13 @@ git config core.hooksPath .githooks
 ## 可读性检查
 
 确定性的可读性检查由 `scripts/check_legibility.py` 实现，并在 CI 中通过 `.github/workflows/legibility.yml` 运行。
+
+## Cursor Cloud specific instructions
+
+`claude-tap` is a single Python CLI package (a local reverse/forward proxy plus a self-contained HTML trace viewer). There is no database, backend service, or frontend build step. The startup update script already runs `uv sync --extra dev` and `uv run playwright install chromium`, so dependencies and the Chromium browser for browser tests are ready.
+
+- Package manager is `uv`; Python 3.13 is pinned via `.python-version` and provided automatically by `uv`. Always run commands through `uv run` / `uv run --extra dev` (do not rely on a bare `python`, which is 3.12 without the deps).
+- Standard lint/test/run commands live in `CONTRIBUTING.md` and the 不可协商规则 section above; do not duplicate them here.
+- The full `pytest tests/` suite passes offline. The ~25 skipped tests are the opt-in real-E2E tests (`tests/e2e/`, `--run-real-e2e`) that need an installed and authenticated `claude` or `codex` CLI plus upstream API credentials; they cannot run without those external accounts.
+- To exercise the proxy end-to-end without a real AI CLI or API keys: run proxy-only mode `uv run python -m claude_tap --tap-no-launch --tap-proxy-mode reverse --tap-target <upstream> --tap-port <port> --tap-no-update-check`, POST an allow-listed path (e.g. `/v1/messages`) to the proxy port, then stop it with Ctrl+C. On shutdown it writes the JSONL trace and generates a self-contained `.html` viewer under `.traces/<date>/` (auth headers are redacted). `.traces/` is gitignored. Only paths in `ALLOWED_PATH_PREFIXES` (`claude_tap/proxy.py`) are forwarded/recorded; other paths return 404.
+- The generated `.traces/<date>/trace_*.html` viewer is fully self-contained and can be opened directly via a `file://` URL in a browser.
