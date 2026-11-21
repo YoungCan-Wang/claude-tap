@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from claude_tap import cli
+from claude_tap.live import LiveViewerServer
 
 
 def test_manus_watch_defaults_to_loopback():
@@ -49,16 +50,55 @@ async def test_manus_uses_watch_path_without_proxy_or_app_launch(tmp_path, monke
     watch = AsyncMock(return_value=0)
     create_ca = MagicMock()
     launch = AsyncMock()
+    bind_host = AsyncMock(return_value="127.0.0.1")
     monkeypatch.setattr(cli, "ensure_shared_dashboard", dashboard)
+    monkeypatch.setattr(cli, "dashboard_bind_host", bind_host)
     monkeypatch.setattr(cli, "_run_manus_watch", watch)
     monkeypatch.setattr(cli, "ensure_ca", create_ca)
     monkeypatch.setattr(cli, "run_client", launch)
 
     assert await cli.async_main(args) == 0
     assert dashboard.await_args.kwargs["host"] == "127.0.0.1"
+    bind_host.assert_awaited_once_with("127.0.0.1", cli.resolve_dashboard_port(args.live_port))
     watch.assert_awaited_once_with(args, store)
     create_ca.assert_not_called()
     launch.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("bind_host", "exit_code"), [("127.0.0.1", 0), ("0.0.0.0", 1)])
+async def test_manus_only_shares_a_running_dashboard_that_listens_on_loopback(
+    tmp_path, monkeypatch, trace_db, capsys, bind_host, exit_code
+):
+    server = LiveViewerServer(port=0, host=bind_host, dashboard_mode=True)
+    port = await server.start()
+    try:
+        args = cli.parse_args(
+            ["--tap-client", "manus", "--tap-live-port", str(port), "--tap-no-open", "--tap-output-dir", str(tmp_path)]
+        )
+        monkeypatch.setattr(cli.sys, "platform", "darwin")
+        watch = AsyncMock(return_value=0)
+        monkeypatch.setattr(cli, "_run_manus_watch", watch)
+
+        assert await cli.async_main(args) == exit_code
+        assert watch.await_count == (1 if exit_code == 0 else 0)
+        err = capsys.readouterr().err
+        assert (f"claude-tap dashboard stop --tap-live-port {port}" in err) == (exit_code == 1)
+    finally:
+        await server.stop()
+
+
+async def test_manus_does_not_share_a_dashboard_with_an_unknown_listen_address(tmp_path, monkeypatch, capsys):
+    args = cli.parse_args(["--tap-client", "manus", "--tap-output-dir", str(tmp_path)])
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "get_trace_store", lambda: object())
+    monkeypatch.setattr(cli, "ensure_shared_dashboard", AsyncMock(return_value=("http://127.0.0.1:19527", False)))
+    monkeypatch.setattr(cli, "dashboard_bind_host", AsyncMock(return_value=None))
+    watch = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "_run_manus_watch", watch)
+
+    assert await cli.async_main(args) == 1
+    watch.assert_not_awaited()
+    assert "is not limited to this computer" in capsys.readouterr().err
 
 
 async def test_manus_waits_for_open_task_and_handles_missing_accessibility_permission(monkeypatch, capsys):

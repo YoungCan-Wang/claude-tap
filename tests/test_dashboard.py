@@ -34,10 +34,12 @@ from claude_tap.dashboard import (
 )
 from claude_tap.history import migrate_legacy_traces
 from claude_tap.live import LiveViewerServer, _record_limit_from_request
+from claude_tap.manus_watcher import ManusWatcher
 from claude_tap.trace import TraceWriter
 from claude_tap.trace_log_handler import SQLiteLogHandler
 from claude_tap.trace_store import get_trace_store
 from tests.conftest import playwright_skip_reason
+from tests.test_manus_watcher import _assistant, _snapshot, _user
 
 # The browser tests below launch chromium, which installs separately from the
 # playwright package, so importorskip alone would let them fail instead of skip.
@@ -692,44 +694,35 @@ def test_dashboard_cursor_transcript_overrides_protobuf_first_user(trace_db) -> 
 
 def test_dashboard_manus_task_keeps_task_status_and_marks_missing_token_usage(trace_db) -> None:
     store = get_trace_store()
-    session_id = store.create_session(client="manus", proxy_mode="manus-desktop")
-    for turn, task_status, event_type, messages, content in (
-        (1, "running", "user_message", [{"role": "user", "content": "Check the release notes."}], []),
-        (2, "waiting", "assistant_message", [], [{"type": "text", "text": "The release notes are ready."}]),
-        (3, "running", "tool_used", [], [{"type": "text", "text": "Opened the release page"}]),
-        (4, "stopped", "task_detail", [], []),
-    ):
-        store.append_record(
-            session_id,
-            {
-                "turn": turn,
-                "transport": "manus-task",
-                "request": {"method": "MANUS_EVENT", "path": "/manus/tasks/task-1", "body": {"messages": messages}},
-                "response": {
-                    "body": {
-                        "content": content,
-                        "manus_task": {"id": "task-1", "title": "Release notes", "status": task_status},
-                        "manus_event": {"type": event_type},
-                    }
-                },
-            },
-        )
+    watcher = ManusWatcher(store)
+    question = _user("Check the release notes.")
+    reply = _assistant("The release notes are ready.")
+    assert watcher.sync_snapshot(_snapshot(question, is_running=True, task_status="thinking")) == 1
+    summary = list_trace_sessions()[0]
+    assert summary["manus_task_status"] == "thinking"
+    assert summary["last_response"] == ""
+
+    assert watcher.sync_snapshot(_snapshot(question, reply, is_running=False, task_status="completed")) == 1
+    assert list_trace_sessions()[0]["manus_task_status"] == "completed"
+    working = _snapshot(question, reply, _user("Add the date."), is_running=True, task_status="thinking")
+    assert watcher.sync_snapshot(working) == 1
 
     summary = list_trace_sessions()[0]
     assert summary["agent"] == "Manus Studio"
     assert summary["agent_key"] == "manus-studio"
     assert summary["status"] == "active"
-    assert summary["manus_task_status"] == "stopped"
-    assert summary["manus_task_title"] == "Release notes"
+    assert summary["record_count"] == 3
+    assert summary["manus_task_status"] == "thinking"
+    assert summary["manus_task_title"] == "Claude Tap demo"
     assert summary["first_user"] == "Check the release notes."
     assert summary["last_response"] == "The release notes are ready."
     assert summary["total_tokens"] is None
     assert store.get_session_aggregates()["token_unavailable_sessions"] == 1
 
-    store.finalize_session(session_id, {})
+    watcher.close()
     summary = list_trace_sessions()[0]
     assert summary["status"] == "complete"
-    assert summary["manus_task_status"] == "stopped"
+    assert summary["manus_task_status"] == "thinking"
     assert summary["total_tokens"] is None
 
 

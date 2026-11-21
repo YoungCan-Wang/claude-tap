@@ -18,6 +18,7 @@ from claude_tap.shared_dashboard import (
     _spawn_dashboard_subprocess,
     _sync_dashboard_healthy_for_current_db,
     _terminate_legacy_dashboard_pids,
+    dashboard_bind_host,
     dashboard_connect_host,
     dashboard_url,
     ensure_shared_dashboard,
@@ -227,6 +228,7 @@ async def test_is_dashboard_healthy_real_server(monkeypatch: pytest.MonkeyPatch,
 
     # Before starting, it should be unhealthy
     assert await is_dashboard_healthy("127.0.0.1", 54321) is False
+    assert await dashboard_bind_host("127.0.0.1", 54321) is None
     assert await wait_for_dashboard_healthy("127.0.0.1", 54321, timeout=0.2, interval=0.05) is False
 
     # Start real server
@@ -239,11 +241,13 @@ async def test_is_dashboard_healthy_real_server(monkeypatch: pytest.MonkeyPatch,
                 payload = await resp.json()
                 assert payload["ok"] is True
                 assert payload["db_path"] == str(resolve_db_path())
+                assert payload["bind_host"] == "127.0.0.1"
                 assert payload["dashboard_mode"] is True
                 assert payload["version"] == CLAUDE_TAP_VERSION
                 assert isinstance(payload["quit_token"], str)
                 assert payload["quit_token"]
         assert await is_dashboard_healthy("127.0.0.1", port) is True
+        assert await dashboard_bind_host("127.0.0.1", port) == "127.0.0.1"
         assert await wait_for_dashboard_healthy("127.0.0.1", port, timeout=1.0) is True
     finally:
         await server.stop()

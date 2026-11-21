@@ -182,6 +182,16 @@ async def is_dashboard_healthy(host: str, port: int, *, require_current_db: bool
     return fallback_status == 200 and not require_current_db
 
 
+async def dashboard_bind_host(host: str, port: int) -> str | None:
+    """Return the address the dashboard on this endpoint reports listening on."""
+    _, payload = await _dashboard_get_status_and_payload(
+        f"{dashboard_url(host, port)}/dashboard/health",
+        timeout_seconds=_DASHBOARD_HEALTH_TIMEOUT,
+    )
+    bind_host = payload.get("bind_host") if payload else None
+    return bind_host if isinstance(bind_host, str) else None
+
+
 async def is_legacy_dashboard_healthy(host: str, port: int) -> bool:
     """Return True for pre-health-route dashboards that still serve sessions."""
     base_url = dashboard_url(host, port)

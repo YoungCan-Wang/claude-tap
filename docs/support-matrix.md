@@ -1,6 +1,6 @@
 ---
 owner: claude-tap-maintainers
-last_reviewed: 2026-08-13
+last_reviewed: 2026-11-21
 source_of_truth: AGENTS.md
 ---
 
@@ -43,6 +43,7 @@ Simplified Chinese version: [支持矩阵](support-matrix.zh.md).
 | Hermes Agent | Provider creds via `~/.hermes/` | Forward proxy (any HTTPS upstream) | n/a | HTTP/SSE | Unit-tested |
 | Hermes Agent | Custom OpenAI-compatible provider (`--tap-proxy-mode reverse`) | `https://api.openai.com` | `/v1` | HTTP/SSE | Unit-tested |
 | Cursor CLI / IDE Agent | Cursor login (`cursor-agent login`) or Cursor IDE | Local `agent-transcripts` watch (no MITM proxy) | n/a | Local transcript JSONL (`cursor-transcript`) | Unit-tested; manual E2E pending after transcript-only switch |
+| Manus Studio (macOS desktop app) | Existing sign-in of the running Manus Studio app | Local Accessibility read of the open task (no proxy) | n/a | Visible task messages (`manus-task`); model requests, tool calls, and token usage are not available | Unit-tested; manual macOS E2E with Manus Studio 2.1.5 |
 | Qoder CLI | Qoder login / `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_JOB_TOKEN` | Forward proxy (Qoder endpoints) | n/a | HTTP/SSE | Real E2E verified |
 | Antigravity CLI | Antigravity login | Forward proxy + `CLOUD_CODE_URL` bridge to `https://daily-cloudcode-pa.googleapis.com` | `CLOUD_CODE_URL` | HTTP/SSE | Manual E2E verified; launch env, Code Assist bridge, and automatic macOS user-keychain CA trust are unit-tested |
 | CodeBuddy CLI | CodeBuddy login (iOA / WeChat / Google-Github / Enterprise Domain) | Auto-detected from `~/.codebuddy/local_storage/` cache; default `https://copilot.tencent.com/v2` | `CODEBUDDY_BASE_URL` | HTTP/SSE Chat Completions | Real E2E verified on iOA |
@@ -68,6 +69,7 @@ Each client in `CLIENT_CONFIGS` declares a `default_proxy_mode` used when
 | `pi` | `forward` | Multi-provider; Pi can use OpenAI Codex OAuth and custom model registry providers, so forward proxy captures traffic without relying on a single base URL override |
 | `hermes` | `forward` | Multi-provider Python agent; `httpx` and `requests` honor `HTTPS_PROXY` natively, so forward proxy capture is the natural default |
 | `cursor` | `transcript` (neither reverse nor forward) | Conversation comes only from `~/.cursor/projects/*/agent-transcripts/*.jsonl`. Bare `claude-tap --tap-client cursor` launches `cursor-agent` and live-watches transcripts into the dashboard (**one tap session per Cursor conversation JSONL**); `--tap-no-launch` is IDE watch-only. No HTTPS proxy / CA |
+| `manus` | `manus-desktop` (neither reverse nor forward) | macOS only; not a `CLIENT_CONFIGS` entry because nothing is launched or proxied. `claude-tap --tap-client manus` reads the task open in the signed-in Manus Studio app through Accessibility and imports its visible messages (**one tap session per Manus task**). No HTTPS proxy / CA; proxy options and non-loopback dashboard addresses are rejected |
 | `qoder` | `forward` | Qoder CLI uses multiple Qoder service endpoints and has no reliable single base URL override |
 | `agy` | `forward` | Antigravity uses multiple Google / Antigravity endpoints; claude-tap sets `HTTPS_PROXY` for auxiliary traffic and `CLOUD_CODE_URL` for Code Assist model traffic |
 | `codebuddy` | `reverse` | Single provider, native `CODEBUDDY_BASE_URL` env var; supports `--settings` env injection. Endpoint auto-detected from CodeBuddy's login cache |
@@ -146,6 +148,7 @@ strip = CLIENT_CONFIGS[client].reverse_strip_path_prefix(target)
 - `test_cursor_transcript_watcher_incremental_and_dedupe` — verifies live incremental sync and path dedupe
 - `test_cursor_transcript_watcher_keeps_conversations_in_separate_sessions` — verifies each Cursor JSONL gets its own tap session
 - `test_dashboard_cursor_transcript_overrides_protobuf_first_user` — verifies transcript wins over protobuf noise in dashboard summaries
+- `tests/test_manus_watcher.py`, `tests/test_manus_cli.py`, `tests/test_manus_desktop.py` — verify Manus Studio message import, resume without duplicates, replacement of replies rewritten before completion, loopback-only dashboard reuse, and Accessibility helper failures that do not expose task text
 - `test_qoder_*` — verifies Qoder registration, parse_args default-mode resolution, forward/reverse env, and argument preservation
 - `test_parse_args_agy_does_not_require_tap_trust_ca` — verifies Antigravity uses the same launch shape as other clients
 - `test_auto_ca_trust_*` — verifies Antigravity automatically requests macOS user-keychain CA trust without sudo

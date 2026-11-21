@@ -1888,11 +1888,7 @@ function renderOverview() {
 
 	function statusInfo(session) {
 	  if (session.agent_key === "manus-studio") {
-	    const label = session.manus_task_status || "—";
-	    if (label === "error") return {label, className: "err"};
-	    if (label === "running" || label === "waiting") return {label, className: "live"};
-	    const className = label === "stopped" ? "ok" : "empty-status";
-	    return {label, className};
+	    return {label: session.manus_task_status || "—", className: "empty-status"};
 	  }
 	  if (session.status === "error") return {label: "ERR", className: "err"};
 	  if (session.status === "empty") return {label: t("status_empty_short"), className: "empty-status"};
@@ -2326,10 +2322,10 @@ function renderRecord(record, index) {
   const responseText = responseTextFromRecord(record) || response.error || t("response_empty");
   const manus = record.transport === "manus-task";
   const event = manus ? response.body?.manus_event : null;
-  const status = manus ? event?.agent_status || event?.status || response.body?.manus_task?.status || "—" : response.status ?? "";
+  const status = manus ? response.body?.manus_task?.status || "—" : response.status ?? "";
   const path = [event?.type, request.path].filter(Boolean).join(" · ");
   const jsonId = `json-${index}`;
-  const statusClass = status === "error" || Number(status) >= 400 ? "error" : "";
+  const statusClass = Number(status) >= 400 ? "error" : "";
   return `
     <article class="section">
       <div class="section-header">

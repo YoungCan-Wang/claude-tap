@@ -128,6 +128,28 @@ def _overlap(stored: list[_Message], observed: list[_Message]) -> tuple[int, boo
     return 0, False
 
 
+def _replaced_tail(stored: list[_Message], observed: list[_Message]) -> tuple[int, int] | None:
+    """Locate rewritten prose that follows the last persisted user message.
+
+    Returns how many persisted messages still stand and where the snapshot continues.
+    """
+    keep = max((index + 1 for index, message in enumerate(stored) if message.role == "user"), default=0)
+    if not keep or keep == len(stored):
+        return None
+    turns = stored[:keep]
+    position, _ = _overlap(turns, observed)
+    if not position:
+        return None
+    # A viewport that starts inside the saved turns has to identify one of them.
+    if position < keep and sum(turns[start : start + position] == observed[:position] for start in range(keep)) != 1:
+        return None
+    while keep < len(stored) and position < len(observed) and stored[keep] == observed[position]:
+        keep += 1
+        position += 1
+    # A viewport that only ends early is not evidence that the remaining prose changed.
+    return (keep, position) if position < len(observed) else None
+
+
 def _record(task: dict[str, str], message: _Message, position: int, *, reply_pending: bool = False) -> dict[str, Any]:
     task_id = task["id"]
     source_id = f"{task_id}-{position}"
@@ -243,7 +265,22 @@ class ManusWatcher:
                 and observed[0] not in stored
             )
             if not overlap and not starts_followup:
-                return 0
+                # Prose saved before the task reported completion is provisional. Interim
+                # narration recorded while no status was visible gives way to the final reply.
+                if saved[-1]["response"]["body"]["manus_task"].get("status") == "completed":
+                    return 0
+                replaced = _replaced_tail(stored, observed)
+                if replaced is None:
+                    return 0
+                keep, overlap = replaced
+                if keep < len(stored) and not self._store.truncate_imported_records(
+                    session_id,
+                    keep_record_count=keep,
+                    expected_record_count=len(stored),
+                    expected_record=saved[-1],
+                ):
+                    return 0
+                saved, stored = saved[:keep], stored[:keep]
         metadata_only_update = (
             bool(overlap)
             and overlap == len(observed)

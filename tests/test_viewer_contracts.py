@@ -15,8 +15,11 @@ from typing import Any
 import pytest
 
 from claude_tap.compact_trace import build_compact_trace_bundle
+from claude_tap.manus_watcher import ManusWatcher
+from claude_tap.trace_store import TraceStore
 from claude_tap.viewer import _generate_html_viewer, _generate_html_viewer_from_compact_bundle, _read_viewer_template
 from tests.conftest import playwright_skip_reason
+from tests.test_manus_watcher import _assistant, _snapshot, _user
 
 try:
     from playwright.sync_api import Page, sync_playwright  # noqa: F401
@@ -2783,60 +2786,40 @@ def test_viewer_session_order_groups_claude_code_tool_loop_rounds(tmp_path: Path
     assert "SUGGESTION MODE" not in state["headerText"]
 
 
-@pytest.mark.parametrize("event_count", [3, 52])
-def test_manus_task_viewer_renders_activity_and_unavailable_metrics(
-    tmp_path: Path, chromium_browser, event_count
-) -> None:
-    records = []
-    for turn in range(1, event_count + 1):
-        event = {"type": "task_detail"}
-        messages = []
-        content = []
-        if turn == 1:
-            event = {"type": "user_message"}
-            messages = [{"role": "user", "content": "Check the release notes."}]
-        elif turn == 2:
-            event = {"type": "tool_used", "tool": "browse", "status": "success", "brief": "Opened the release page"}
-            content = [{"type": "text", "text": "Opened the release page"}]
-        records.append(
-            {
-                "turn": turn,
-                "request_id": f"manus_{turn}",
-                "timestamp": "2026-11-20T00:00:00Z",
-                "transport": "manus-task",
-                "capture": {"client": "manus", "proxy_mode": "manus-desktop", "manus_task_id": "task-1"},
-                "request": {"method": "MANUS_EVENT", "path": "/manus/tasks/task-1", "body": {"messages": messages}},
-                "response": {
-                    "body": {
-                        "content": content,
-                        "manus_task": {"id": "task-1", "title": "Release notes", "status": "waiting"},
-                        "manus_event": event,
-                    }
-                },
-            }
-        )
-    html_path = _generate_case_html(tmp_path, "manus_task", tuple(records))
+@pytest.mark.parametrize("turns", [2, 26])
+def test_manus_task_viewer_renders_activity_and_unavailable_metrics(tmp_path: Path, chromium_browser, turns) -> None:
+    store = TraceStore(tmp_path / "manus.db")
+    watcher = ManusWatcher(store)
+    messages = []
+    for turn in range(1, turns + 1):
+        messages.append(_user(f"Question {turn}"))
+        assert watcher.sync_snapshot(_snapshot(*messages, is_running=True, task_status="thinking")) == 1
+        messages.append(_assistant(f"Answer {turn}"))
+        assert watcher.sync_snapshot(_snapshot(*messages, is_running=False, task_status="completed")) == 1
+    records = tuple(store.load_records(store.list_session_rows()[0]["id"]))
+    html_path = _generate_case_html(tmp_path, "manus_task", records)
 
     page = chromium_browser.new_page()
     page.add_init_script("localStorage.setItem('claude-tap-sidebar-order', 'session')")
     try:
         errors = _open_viewer_with_error_capture(page, html_path)
-        assert page.locator(".group-name").all_text_contents() == ["Manus Studio task - Release notes"]
-        assert page.locator("#stat-turns").inner_text() == str(event_count)
+        assert page.locator(".group-name").all_text_contents() == ["Manus Studio task - Claude Tap demo"]
+        assert page.locator("#stat-turns").inner_text() == str(turns * 2)
         assert page.locator("#stat-tokens").inner_text() == "—"
         assert page.locator("#stat-cost").inner_text() == "—"
         assert page.locator(".sidebar-item .si-tok").count() == 0
-        assert "Check the release notes." in page.locator("#detail").inner_text()
+        assert page.locator(".sidebar-item.is-error").count() == 0
+        assert "Question 1" in page.locator("#detail").inner_text()
 
-        page.locator(".sidebar-item", has_text="tool_used").click()
+        page.locator(".sidebar-item", has_text="assistant_message").first.click()
         page.locator("#detail .section-header", has_text="Manus Studio task").wait_for()
         task_section = page.locator(
             "#detail .section", has=page.locator(".section-header", has_text="Manus Studio task")
         )
         task_text = task_section.inner_text()
-        assert "waiting" in task_text
-        assert "Opened the release page" in task_text
-        assert "browse" in task_text
+        assert "completed" in task_text
+        assert "assistant_message" in task_text
+        assert "Answer 1" in task_text
         assert "API costs are unavailable" in task_text
         assert page.get_by_role("button", name="cURL", exact=True).count() == 0
         assert errors == []

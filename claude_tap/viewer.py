@@ -2064,7 +2064,6 @@ def _extract_metadata_from_record(r: dict) -> dict | None:
         manus_metadata = {
             "manus_task_title": task.get("title", ""),
             "manus_event_type": event.get("type", ""),
-            "manus_agent_status": event.get("agent_status", ""),
         }
 
     return {

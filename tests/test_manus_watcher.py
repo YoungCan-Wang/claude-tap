@@ -225,6 +225,95 @@ def test_new_turn_holds_unconfirmed_reply_even_if_thinking_was_never_seen(tmp_pa
     ]
 
 
+def test_interim_prose_saved_before_any_status_gives_way_to_the_final_reply(tmp_path):
+    store = TraceStore(tmp_path / "traces.db")
+    watcher = ManusWatcher(store)
+    question = _user("Use the terminal")
+    narration = _assistant("I'll open the terminal.")
+    assert watcher.sync_snapshot(_snapshot(question, narration)) == 2
+    assert watcher.sync_snapshot(_snapshot(question, narration, _assistant("MANUS-D"))) == 1
+    assert watcher.sync_snapshot(_snapshot(question, narration, is_running=True, task_status="thinking")) == 0
+    assert len(_records_for_task(store)) == 3
+
+    restarted = ManusWatcher(TraceStore(store.db_path))
+    final = _assistant("MANUS-DESKTOP-SEVENTH")
+    assert restarted.sync_snapshot(_snapshot(question, final, task_status="completed")) == 1
+    assert restarted.sync_snapshot(_snapshot(question, final, task_status="completed")) == 0
+    records = _records_for_task(store)
+    assert [_event(record)["content"] for record in records] == ["Use the terminal", "MANUS-DESKTOP-SEVENTH"]
+    assert [record["turn"] for record in records] == [1, 2]
+    assert records[1]["response"]["body"]["manus_task"]["status"] == "completed"
+    session = store.list_session_rows()[0]
+    assert session["record_count"] == 2
+    assert json.loads(session["summary_json"])["last_response"] == "MANUS-DESKTOP-SEVENTH"
+
+    next_turn = _snapshot(question, final, _user("Thanks"), _assistant("Welcome"), task_status="completed")
+    assert restarted.sync_snapshot(next_turn) == 2
+    assert [_event(record)["content"] for record in _records_for_task(store)] == [
+        "Use the terminal",
+        "MANUS-DESKTOP-SEVENTH",
+        "Thanks",
+        "Welcome",
+    ]
+
+
+def test_unconfirmed_reply_follows_the_conversation_when_status_is_never_visible(tmp_path):
+    store = TraceStore(tmp_path / "traces.db")
+    watcher = ManusWatcher(store)
+    question = _user("Summarize the file")
+    assert watcher.sync_snapshot(_snapshot(question, _assistant("Reading the file now."))) == 2
+    assert watcher.sync_snapshot(_snapshot(question, _assistant("The file lists three items."))) == 1
+    assert watcher.sync_snapshot(_snapshot(question, _user("Shorter?"))) == 1
+    assert [_event(record)["content"] for record in _records_for_task(store)] == ["Summarize the file", "Shorter?"]
+    assert [record["turn"] for record in _records_for_task(store)] == [1, 2]
+
+
+def test_saved_reply_stands_unless_the_snapshot_shows_its_turn_was_rewritten(tmp_path):
+    store = TraceStore(tmp_path / "traces.db")
+    watcher = ManusWatcher(store)
+    confirmed = (_user("Ask"), _assistant("Confirmed"))
+    assert watcher.sync_snapshot(_snapshot(*confirmed, task_status="completed")) == 2
+    assert watcher.sync_snapshot(_snapshot(_user("Ask"), _assistant("Older turn with the same prompt"))) == 0
+    assert [_event(record)["content"] for record in _records_for_task(store)] == ["Ask", "Confirmed"]
+
+    repeated = (_user("Continue"), _assistant("First"), _user("Continue"), _assistant("Second"))
+    assert watcher.sync_snapshot(_snapshot(*repeated, task_id=_OTHER_TASK_ID)) == 4
+    assert watcher.sync_snapshot(_snapshot(*repeated[:2], task_id=_OTHER_TASK_ID)) == 0
+    assert watcher.sync_snapshot(_snapshot(*repeated[:3], task_id=_OTHER_TASK_ID)) == 0
+    assert [_event(record)["content"] for record in _records_for_task(store, _OTHER_TASK_ID)] == [
+        "Continue",
+        "First",
+        "Continue",
+        "Second",
+    ]
+
+
+def test_truncating_imported_records_requires_the_expected_latest_record(tmp_path):
+    store = TraceStore(tmp_path / "traces.db")
+    assert ManusWatcher(store).sync_snapshot(_snapshot(_user("Start"), _assistant("One"), _assistant("Two"))) == 3
+    session_id = store.list_session_rows()[0]["id"]
+    saved = store.load_records(session_id)
+    for keep, expected_count, expected_record in (
+        (1, 2, saved[-1]),
+        (1, 3, saved[0]),
+        (0, 3, saved[-1]),
+        (3, 3, saved[-1]),
+    ):
+        assert not store.truncate_imported_records(
+            session_id,
+            keep_record_count=keep,
+            expected_record_count=expected_count,
+            expected_record=expected_record,
+        )
+    assert store.load_records(session_id) == saved
+
+    assert store.truncate_imported_records(
+        session_id, keep_record_count=1, expected_record_count=3, expected_record=saved[-1]
+    )
+    assert store.load_records(session_id) == saved[:1]
+    assert store.list_session_rows()[0]["record_count"] == 1
+
+
 def test_unavailable_task_or_empty_chat_does_not_make_a_session(tmp_path):
     store = TraceStore(tmp_path / "traces.db")
     watcher = ManusWatcher(store)
