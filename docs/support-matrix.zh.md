@@ -1,6 +1,6 @@
 ---
 owner: claude-tap-maintainers
-last_reviewed: 2026-08-13
+last_reviewed: 2026-11-21
 source_of_truth: AGENTS.md
 ---
 
@@ -43,6 +43,7 @@ English version: [Support Matrix](support-matrix.md).
 | Hermes Agent | 通过 `~/.hermes/` 配置 provider 凭据 | Forward proxy（任意 HTTPS 上游） | n/a | HTTP/SSE | 单测覆盖 |
 | Hermes Agent | 自定义 OpenAI 兼容 provider（`--tap-proxy-mode reverse`） | `https://api.openai.com` | `/v1` | HTTP/SSE | 单测覆盖 |
 | Cursor CLI / IDE Agent | Cursor 登录（`cursor-agent login`）或 Cursor IDE | 本地 `agent-transcripts` 监听（不走 MITM 代理） | n/a | 本地 transcript JSONL（`cursor-transcript`） | 单测已覆盖；transcript-only 切换后手动 E2E 待确认 |
+| Manus Studio（macOS 桌面端） | 复用正在运行的 Manus Studio 的现有登录 | 通过本地辅助功能读取当前打开的任务（不走代理） | n/a | 可见的任务消息（`manus-task`）；没有模型请求、工具调用和 token 用量 | 单测覆盖；已使用 Manus Studio 2.1.5 在 macOS 上手动 E2E 验证 |
 | Qoder CLI | Qoder 登录 / `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_JOB_TOKEN` | Forward proxy（Qoder 端点） | n/a | HTTP/SSE | 真实 E2E 已验证 |
 | Antigravity CLI | Antigravity 登录 | Forward proxy + `CLOUD_CODE_URL` bridge 到 `https://daily-cloudcode-pa.googleapis.com` | `CLOUD_CODE_URL` | HTTP/SSE | 手动 E2E 已验证；启动环境、Code Assist bridge 和 macOS 用户 keychain CA 自动信任已由单测覆盖 |
 | CodeBuddy CLI | CodeBuddy 登录（iOA / WeChat / Google-Github / Enterprise Domain） | 自动从 `~/.codebuddy/local_storage/` 缓存识别；默认 `https://copilot.tencent.com/v2` | `CODEBUDDY_BASE_URL` | HTTP/SSE Chat Completions | iOA 真实 E2E 已验证 |
@@ -67,6 +68,7 @@ English version: [Support Matrix](support-matrix.md).
 | `pi` | `forward` | 多 provider；Pi 可以使用 OpenAI Codex OAuth 和自定义 model registry provider，forward proxy 不依赖单一 base URL 覆盖即可捕获流量 |
 | `hermes` | `forward` | 多 provider 的 Python agent；`httpx` 与 `requests` 都原生认 `HTTPS_PROXY`，forward proxy 捕获是最自然的默认 |
 | `cursor` | `transcript`（既非 reverse 也非 forward） | 对话只来自 `~/.cursor/projects/*/agent-transcripts/*.jsonl`。最短命令 `claude-tap --tap-client cursor` 会启动 `cursor-agent` 并实时 watch 写入 dashboard（**每个 Cursor 会话 JSONL 对应一个独立 tap session**）；`--tap-no-launch` 仅 watch IDE。不启动 HTTPS 代理 / CA |
+| `manus` | `manus-desktop`（既非 reverse 也非 forward） | 仅支持 macOS；不启动也不代理任何进程，因此不在 `CLIENT_CONFIGS` 中。`claude-tap --tap-client manus` 通过辅助功能读取已登录 Manus Studio 中当前打开的任务，并导入其可见消息（**每个 Manus 任务对应一个独立 tap session**）。不启动 HTTPS 代理 / CA；拒绝代理相关参数和非回环的 dashboard 地址 |
 | `qoder` | `forward` | Qoder CLI 会访问多个 Qoder 服务端点，且没有可靠的单一 base URL 覆盖能力 |
 | `agy` | `forward` | Antigravity 会访问多个 Google / Antigravity 端点；claude-tap 用 `HTTPS_PROXY` 捕获辅助流量，并用 `CLOUD_CODE_URL` 捕获 Code Assist 模型流量 |
 | `codebuddy` | `reverse` | 单 provider，原生支持 `CODEBUDDY_BASE_URL` 环境变量；支持 `--settings` 环境变量注入；上游 endpoint 自动从 CodeBuddy 登录缓存识别 |
@@ -140,6 +142,7 @@ strip = CLIENT_CONFIGS[client].reverse_strip_path_prefix(target)
 - `test_cursor_transcript_watcher_incremental_and_dedupe`：验证增量 sync 与 path 去重
 - `test_cursor_transcript_watcher_keeps_conversations_in_separate_sessions`：验证每个 Cursor JSONL 对应独立 tap session
 - `test_dashboard_cursor_transcript_overrides_protobuf_first_user`：验证 dashboard 摘要优先使用 transcript，忽略 protobuf 噪声
+- `tests/test_manus_watcher.py`、`tests/test_manus_cli.py`、`tests/test_manus_desktop.py`：验证 Manus Studio 消息导入、恢复监听时不重复、任务完成前被改写的回复会被替换、只复用回环地址上的 dashboard，以及辅助功能 helper 失败时不泄露任务文本
 - `test_qoder_*`：验证 Qoder 注册、parse_args 默认模式解析、forward/reverse 环境变量和参数透传
 - `test_parse_args_agy_does_not_require_tap_trust_ca`：验证 Antigravity 使用和其他客户端一致的启动形态
 - `test_auto_ca_trust_*`：验证 Antigravity 会自动请求 macOS 用户 keychain CA 信任，且不需要 sudo
