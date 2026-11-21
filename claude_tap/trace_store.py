@@ -171,8 +171,6 @@ class TraceStore:
         expected_record: dict[str, Any],
     ) -> bool:
         """Update a growing imported message if it is still the latest stored record."""
-        from claude_tap.dashboard import build_stored_session_summary
-
         with self._write_access() as conn:
             session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if session is None or session["record_count"] != expected_record_count:
@@ -196,15 +194,53 @@ class TraceStore:
                 "UPDATE sessions SET updated_at = ?, status = 'active' WHERE id = ?",
                 (updated_at, session_id),
             )
-            session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-            records = self._load_records_with_connection(conn, session_id)
-            summary = build_stored_session_summary(session, records)
-            conn.execute(
-                "UPDATE sessions SET summary_json = ? WHERE id = ?",
-                (json.dumps(summary, ensure_ascii=False, separators=(",", ":")), session_id),
-            )
+            self._rebuild_summary(conn, session_id)
             conn.commit()
             return True
+
+    def truncate_imported_records(
+        self,
+        session_id: str,
+        *,
+        keep_record_count: int,
+        expected_record_count: int,
+        expected_record: dict[str, Any],
+    ) -> bool:
+        """Drop trailing imported records that their source no longer shows."""
+        with self._write_access() as conn:
+            session = conn.execute("SELECT record_count FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None or session["record_count"] != expected_record_count:
+                return False
+            rows = conn.execute(
+                """
+                SELECT session_id, record_index, payload_json FROM records
+                WHERE session_id = ? ORDER BY record_index
+                """,
+                (session_id,),
+            ).fetchall()
+            if not 0 < keep_record_count < len(rows) or self._rows_to_records(conn, rows[-1:]) != [expected_record]:
+                return False
+            conn.execute(
+                "DELETE FROM records WHERE session_id = ? AND record_index > ?",
+                (session_id, rows[keep_record_count - 1]["record_index"]),
+            )
+            conn.execute(
+                "UPDATE sessions SET record_count = ?, status = 'active' WHERE id = ?",
+                (keep_record_count, session_id),
+            )
+            self._rebuild_summary(conn, session_id)
+            conn.commit()
+            return True
+
+    def _rebuild_summary(self, conn: sqlite3.Connection, session_id: str) -> None:
+        from claude_tap.dashboard import build_stored_session_summary
+
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        summary = build_stored_session_summary(session, self._load_records_with_connection(conn, session_id))
+        conn.execute(
+            "UPDATE sessions SET summary_json = ? WHERE id = ?",
+            (json.dumps(summary, ensure_ascii=False, separators=(",", ":")), session_id),
+        )
 
     def _append_record(self, conn: sqlite3.Connection, session_id: str, record: dict[str, Any]) -> None:
         next_index = self._next_record_index(conn, session_id)
