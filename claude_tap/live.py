@@ -366,6 +366,7 @@ class LiveViewerServer:
         payload = {
             "ok": True,
             "db_path": str(resolve_db_path()),
+            "bind_host": self.host,
             "dashboard_mode": self.dashboard_mode,
             "version": CLAUDE_TAP_VERSION,
         }

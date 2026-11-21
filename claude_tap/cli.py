@@ -67,6 +67,7 @@ from claude_tap.manus_watcher import ManusWatcher
 from claude_tap.proxy import proxy_handler
 from claude_tap.shared_dashboard import (
     DEFAULT_DASHBOARD_PORT,
+    dashboard_bind_host,
     dashboard_url,
     ensure_shared_dashboard,
     is_dashboard_healthy,
@@ -96,6 +97,15 @@ _MANUS_WAITING_MESSAGES = {
     "conversation_unavailable": "Waiting for the open Manus Studio conversation to load.",
     "snapshot_incomplete": "Waiting for a complete Manus Studio Accessibility snapshot.",
 }
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 async def _run_manus_watch(args: argparse.Namespace, store: TraceStore) -> int:
@@ -444,6 +454,16 @@ async def _async_main(args: argparse.Namespace) -> int:
             _print(f"⚠️  {exc}", file=sys.stderr)
 
     if manus:
+        # A dashboard that was already running keeps the address it was started with.
+        if dashboard_url_value is not None:
+            bind_host = await dashboard_bind_host(dashboard_host, dashboard_port)
+            if bind_host is None or not _is_loopback_host(bind_host):
+                _print(
+                    f"The dashboard on {dashboard_url_value} is not limited to this computer. Stop it with "
+                    f"`claude-tap dashboard stop --tap-live-port {dashboard_port}`, then start the watcher again.",
+                    file=sys.stderr,
+                )
+                return 1
         return await _run_manus_watch(args, store)
 
     # Proxy logs go to SQLite, not terminal (avoids polluting Claude TUI)
@@ -1043,13 +1063,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             tap_parser.error("Manus watch mode does not support proxy or prompt export options")
         if args.host is None:
             args.host = "127.0.0.1"
-        elif args.host != "localhost":
-            try:
-                is_loopback = ipaddress.ip_address(args.host).is_loopback
-            except ValueError:
-                is_loopback = False
-            if not is_loopback:
-                tap_parser.error("Manus watch mode requires a loopback dashboard address")
+        elif not _is_loopback_host(args.host):
+            tap_parser.error("Manus watch mode requires a loopback dashboard address")
         args.claude_args = []
         return args
     args.client_cmd, claude_args = _extract_wrapped_client_command(args.client, claude_args)

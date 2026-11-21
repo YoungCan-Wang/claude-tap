@@ -635,7 +635,9 @@ claude-tap --tap-client manus
 
 The watcher uses macOS Accessibility to copy visible messages and recognized task states into the local dashboard. Each task gets its own session when you open it in Studio. The watcher uses your existing app session and requires macOS Command Line Tools plus Accessibility access for the app running the command. If access is missing, grant it under **System Settings → Privacy & Security → Accessibility**, then restart the watcher.
 
-Older messages may be absent if Studio has not loaded them. A turn can also be missed if Studio replaces the visible conversation between checks. Raw tool calls, model request bodies, system prompts, and token usage are unavailable in this mode. The watcher starts its dashboard on loopback and stops with Ctrl+C.
+Older messages may be absent if Studio has not loaded them. A turn can also be missed if Studio replaces the visible conversation between checks. Raw tool calls, model request bodies, system prompts, and token usage are unavailable in this mode. The watcher stops with Ctrl+C.
+
+The watcher serves its dashboard on loopback only and refuses to reuse a running dashboard that listens on another address. Captured tasks stay in the shared local trace database, so a dashboard you later start on a non-loopback address serves them too.
 
 ### CLI Options
 
