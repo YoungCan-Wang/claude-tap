@@ -951,7 +951,7 @@ function createSidebarItem(e, i) {
   const statusCode = getResponseStatus(e);
   const manus = isManusTaskEntry(e);
   const manusEvent = e.response?.body?.manus_event;
-  const failed = statusCode >= 400 || (manus && (manusEvent?.type === 'error' || manusEvent?.agent_status === 'error'));
+  const failed = statusCode >= 400;
   item.className = 'sidebar-item' + (failed ? ' is-error' : '');
   item.dataset.idx = i;
   const u = getUsage(e);
@@ -977,7 +977,7 @@ function createSidebarItem(e, i) {
       : t('tool_bloat_hint');
     bloatBadgeHtml = `<span class="si-bloat-badge" title="${esc(hint)}">&#9888; ${esc(worst.sizeKB)}KB</span>`;
   }
-  const errorDot = failed ? `<span class="si-error-dot"${manus ? '' : ` title="HTTP ${statusCode}"`}></span>` : '';
+  const errorDot = failed ? `<span class="si-error-dot" title="HTTP ${statusCode}"></span>` : '';
   item.innerHTML = `
     <div class="si-row1">
       <span class="si-turn-wrap"><span class="si-turn">${t('turn')} ${displayTurnLabel(e)}</span>${errorDot}</span>
